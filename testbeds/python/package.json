@@ -32,5 +32,9 @@
 		"build": "npm run compile",
 		"compile": "node ../../node_modules/typescript/lib/tsc.js -b tsconfig.json",
 		"watch": "node ../../node_modules/typescript/lib/tsc.js -b tsconfig.json -w"
+	},
+	"dependencies": {
+		"@vscode/sync-api-common": "^0.1.0",
+		"@vscode/sync-api-service": "^0.1.0"
 	}
 }

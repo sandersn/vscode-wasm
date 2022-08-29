@@ -2,59 +2,123 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import * as path from 'path';
-import { parentPort  } from 'worker_threads';
-
-import { URI } from 'vscode-uri';
-
-import { ClientConnection } from '@vscode/sync-api-common/node';
+import * as ts from 'typescript';
 import { ApiClient, APIRequests } from '@vscode/sync-api-client';
-import { WASI, Options } from '@vscode/wasm-wasi/node';
+import { ClientConnection, DTOs } from '@vscode/sync-api-common/browser';
+import { Utils } from 'vscode-uri';
 
-if (parentPort === null) {
-	process.exit();
+
+let host: ts.ParseConfigFileHost | undefined
+let init: Promise<any> | undefined
+self.onmessage = async event => {
+
+	const { data } = event;
+
+	// when receiving a message port use it to create the sync-rpc
+	// connection. continue to listen to "normal" message events
+	// for commands or other things
+	if (data instanceof MessagePort) {
+		const connection = new ClientConnection<APIRequests>(data);
+		init = connection.serviceReady().then(() => _initTsConfigHost(connection))
+		return;
+	}
+
+	if (!init) {
+		console.error('INIT message not yet received');
+		return;
+	}
+
+	await init
+
+	// every other message is a parse-ts-config-request
+	if (!host) {
+		console.error('NOT READY', data);
+		return
+	}
+
+	if (typeof data !== 'string') {
+		console.error('UNKNOWN DATA', data);
+		return;
+	}
+
+	try {
+		const parsed = ts.getParsedCommandLineOfConfigFile(data, undefined, host)
+		console.log(JSON.stringify(parsed, undefined, 4))
+	} catch (error) {
+		console.error(error)
+	}
 }
 
-const connection = new ClientConnection<APIRequests>(parentPort);
-connection.serviceReady().then(async (params) => {
-	debugger;
-	const name = 'Python Shell';
+
+function _initTsConfigHost(connection: ClientConnection<APIRequests>) {
+
 	const apiClient = new ApiClient(connection);
-	const workspaceFolders = apiClient.vscode.workspace.workspaceFolders;
-	const activeTextDocument = apiClient.vscode.window.activeTextDocument;
-	const mapDir: Options['mapDir'] = [];
-	let toRun: string | undefined;
-	if (workspaceFolders.length === 1) {
-		const folderUri = workspaceFolders[0].uri;
-		mapDir.push({ name: path.posix.join(path.posix.sep, 'workspace'), uri: folderUri });
-		if (activeTextDocument !== undefined) {
-			const file =  activeTextDocument.uri;
-			if (file.toString().startsWith(folderUri.toString())) {
-				toRun = path.posix.join(path.posix.sep, 'workspace', file.toString().substring(folderUri.toString().length));
+
+	type FileSystemEntries = {
+		readonly files: readonly string[];
+		readonly directories: readonly string[];
+	}
+	type TSExt = typeof ts & {
+		matchFiles(path: string, extensions: readonly string[] | undefined, excludes: readonly string[] | undefined, includes: readonly string[] | undefined, useCaseSensitiveFileNames: boolean, currentDirectory: string, depth: number | undefined, getFileSystemEntries: (path: string) => FileSystemEntries, realpath: (path: string) => string): string[];
+	}
+
+	host = new class implements ts.ParseConfigFileHost {
+
+		// -- ParseConfigFileHost
+
+		readonly useCaseSensitiveFileNames: boolean = true;
+
+		getCurrentDirectory() {
+			return '/'
+		}
+
+		readDirectory(rootDir: string, extensions: readonly string[], excludes: readonly string[] | undefined, includes: readonly string[], depth?: number | undefined): readonly string[] {
+			return (<TSExt>ts).matchFiles(
+				rootDir, extensions, excludes, includes, false, this.getCurrentDirectory(), depth,
+				path => this._getFileSystemEntries(path),
+				path => path
+			)
+		}
+
+		private _getFileSystemEntries(path: string): FileSystemEntries {
+			const uri = Utils.joinPath(apiClient.vscode.workspace.workspaceFolders[0].uri, path)
+			const entries = apiClient.vscode.workspace.fileSystem.readDirectory(uri);
+			const files: string[] = [];
+			const directories: string[] = [];
+			for (const [name, type] of entries) {
+				switch (type) {
+					case DTOs.FileType.Directory:
+						directories.push(name);
+						break;
+					case DTOs.FileType.File:
+						files.push(name);
+						break;
+				}
+			}
+			return { files, directories }
+		}
+
+		fileExists(path: string): boolean {
+			try {
+				const uri = Utils.joinPath(apiClient.vscode.workspace.workspaceFolders[0].uri, path)
+				apiClient.vscode.workspace.fileSystem.stat(uri)
+				return true;
+			} catch (error) {
+				return false;
 			}
 		}
-	} else {
-		for (const folder of workspaceFolders) {
-			mapDir.push({ name: path.posix.join(path.posix.sep, 'workspaces', folder.name), uri: folder.uri });
+
+		readFile(path: string): string | undefined {
+			const uri = Utils.joinPath(apiClient.vscode.workspace.workspaceFolders[0].uri, path)
+		    const bytes = apiClient.vscode.workspace.fileSystem.readFile(uri)
+			return new TextDecoder().decode(new Uint8Array(bytes).slice())
+		}
+
+		// --- ConfigFileDiagnosticsReporter
+
+		onUnRecoverableConfigFileDiagnostic(d: ts.Diagnostic) {
+			debugger;
+			console.error('FATAL', d)
 		}
 	}
-	const pythonRoot = URI.file(`/home/dirkb/Projects/dbaeumer/python-3.11.0rc`);
-	mapDir.push({ name: path.posix.sep, uri: pythonRoot });
-	const exitHandler = (rval: number): void => {
-		apiClient.process.procExit(rval);
-	};
-	const wasi = WASI.create(name, apiClient, exitHandler, {
-		mapDir,
-		argv: toRun !== undefined ? ['python', '-X', 'utf8', toRun] : ['python', '-X', 'utf8'],
-		env: {
-			PYTHONPATH: '/workspace'
-		}
-	});
-	const binary = apiClient.vscode.workspace.fileSystem.read(pythonRoot.with({ path: path.join(pythonRoot.path, 'python.wasm') }));
-	const { instance } = await WebAssembly.instantiate(binary, {
-		wasi_snapshot_preview1: wasi
-	});
-	wasi.initialize(instance);
-	(instance.exports._start as Function)();
-	apiClient.process.procExit(0);
-}).catch(console.error);
+}

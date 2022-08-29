@@ -14,7 +14,6 @@ import { APIRequests, ApiService } from '@vscode/sync-api-service';
 const connectionState: Map<number, [Worker, ServiceConnection<APIRequests>, ApiService, Terminal]> = new Map();
 
 export async function activate(_context: ExtensionContext) {
-
 	commands.registerCommand('testbed-python.runFile', () => {
 		const activeDocument = window.activeTextEditor?.document;
 		if (activeDocument === undefined || activeDocument.languageId !== 'python') {
@@ -32,10 +31,8 @@ export async function activate(_context: ExtensionContext) {
 		terminal.show();
 
 		connectionState.set(key, [worker, connection, apiService, terminal]);
-
 		connection.signalReady();
 	});
-
 	commands.registerCommand('testbed-python.runInteractive', () => {
 		const key = Date.now();
 		const worker = new Worker(path.join(__dirname, './worker.js'));
