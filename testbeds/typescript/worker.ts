@@ -9,6 +9,8 @@ import { Utils } from 'vscode-uri';
 
 
 let host: ts.ParseConfigFileHost | undefined
+let host2: ts.CompilerHost | undefined // ProgramHost, System, WatchCompilerHost[OfFileAndCompilerOptions], LanguageServiceHost
+let lsh: ts.LanguageServiceHost | undefined
 let init: Promise<any> | undefined
 self.onmessage = async event => {
     const { data } = event;
@@ -17,7 +19,7 @@ self.onmessage = async event => {
     // for commands or other things
     if (data instanceof MessagePort) {
         const connection = new ClientConnection<APIRequests>(data);
-        init = connection.serviceReady().then(() => _initTsConfigHost(connection))
+        init = connection.serviceReady().then(() => initTsConfigHost(connection))
         return;
     }
     if (!init) {
@@ -43,7 +45,7 @@ self.onmessage = async event => {
 }
 
 
-function _initTsConfigHost(connection: ClientConnection<APIRequests>) {
+function initTsConfigHost(connection: ClientConnection<APIRequests>) {
 	const apiClient = new ApiClient(connection);
     type FileSystemEntries = {
         readonly files: readonly string[];
@@ -108,5 +110,94 @@ function _initTsConfigHost(connection: ClientConnection<APIRequests>) {
             debugger;
             console.error('FATAL', d)
         },
+    }
+    host2 = {
+        // ...host,
+        getSourceFile(fileName: string, languageVersionOrOptions: ScriptTarget | CreateSourceFileOptions, onError?: (message: string) => void, shouldCreateNewSourceFile?: boolean): SourceFile | undefined {
+        },
+        getSourceFileByPath?(fileName: string, path: Path, languageVersionOrOptions: ScriptTarget | CreateSourceFileOptions, onError?: (message: string) => void, shouldCreateNewSourceFile?: boolean): SourceFile | undefined {
+        },
+        getCancellationToken?(): CancellationToken {
+        },
+        getDefaultLibFileName(options: CompilerOptions): string {
+        },
+        getDefaultLibLocation?(): string {
+        },
+        writeFile: WriteFileCallback,
+        getCurrentDirectory(): string {
+        }
+        getCanonicalFileName(fileName: string): string {
+        },
+        useCaseSensitiveFileNames: () => true,
+        getNewLine: () => '\n',
+        readDirectory?(rootDir: string, extensions: readonly string[], excludes: readonly string[] | undefined, includes: readonly string[], depth?: number): string[] {
+        },
+        resolveModuleNames?(moduleNames: string[], containingFile: string, reusedNames: string[] | undefined, redirectedReference: ResolvedProjectReference | undefined, options: CompilerOptions, containingSourceFile?: SourceFile): (ResolvedModule | undefined)[] {
+        },
+        /**
+         * Returns the module resolution cache used by a provided `resolveModuleNames` implementation so that any non-name module resolution operations (eg, package.json lookup) can reuse it
+         */
+        getModuleResolutionCache?(): ModuleResolutionCache | undefined {
+        },
+        /**
+         * This method is a companion for 'resolveModuleNames' and is used to resolve 'types' references to actual type declaration files
+         */
+        resolveTypeReferenceDirectives?(typeReferenceDirectiveNames: string[] | readonly FileReference[], containingFile: string, redirectedReference: ResolvedProjectReference | undefined, options: CompilerOptions, containingFileMode?: SourceFile["impliedNodeFormat"] | undefined): (ResolvedTypeReferenceDirective | undefined)[] {
+        },
+        getEnvironmentVariable?(name: string): string | undefined {
+        },
+        createHash?(data: string): string {
+        },
+        getParsedCommandLine?(fileName: string): ParsedCommandLine | undefined {
+        }
+    }
+    let scriptVersion = new Map<string, number>()
+    let projectVersion = 0
+    lsh = {
+        getCompilationSettings(): ts.CompilerOptions {
+            // TODO: read settings from a tsconfig at root?
+            return {
+                strict: true
+            }
+        },
+        getNewLine: () => '\n',
+        getProjectVersion: () => projectVersion + ''
+        getScriptFileNames(): string[]{},
+        getScriptKind?(fileName: string): ScriptKind {},
+        getScriptVersion(fileName) {
+            // TODO: Might return undefined?!
+            return scriptVersion.get(fileName) + ''
+        },
+        getScriptSnapshot(fileName: string): IScriptSnapshot | undefined{},
+        getProjectReferences?(): readonly ProjectReference[] | undefined{},
+        getLocalizedDiagnosticMessages?(): any{},
+        getCancellationToken?(): HostCancellationToken{},
+        getCurrentDirectory(): string{},
+        getDefaultLibFileName(options: CompilerOptions): string{},
+        log?(s: string): void{},
+        trace?(s: string): void{},
+        error?(s: string): void{},
+        useCaseSensitiveFileNames?(): boolean{},
+        readDirectory?(path: string, extensions?: readonly string[], exclude?: readonly string[], include?: readonly string[], depth?: number): string[]{},
+        realpath?(path: string): string{},
+        readFile(path: string, encoding?: string): string | undefined{},
+        fileExists(path: string): boolean{},
+        getTypeRootsVersion?(): number{},
+        resolveModuleNames?(moduleNames: string[], containingFile: string, reusedNames: string[] | undefined, redirectedReference: ResolvedProjectReference | undefined, options: CompilerOptions, containingSourceFile?: SourceFile): (ResolvedModule | undefined)[]{},
+        getResolvedModuleWithFailedLookupLocationsFromCache?(modulename: string, containingFile: string, resolutionMode?: ModuleKind.CommonJS | ModuleKind.ESNext): ResolvedModuleWithFailedLookupLocations | undefined{},
+        resolveTypeReferenceDirectives?(typeDirectiveNames: string[] | FileReference[], containingFile: string, redirectedReference: ResolvedProjectReference | undefined, options: CompilerOptions, containingFileMode?: SourceFile["impliedNodeFormat"] | undefined): (ResolvedTypeReferenceDirective | undefined)[]{},
+        getDirectories?(directoryName: string): string[]{},
+        /**
+         * Gets a set of custom transformers to use during emit.
+         */
+        getCustomTransformers?(): CustomTransformers | undefined{},
+        isKnownTypesPackageName?(name: string): boolean{},
+        installPackage?(options: InstallPackageOptions): Promise<ApplyCodeActionCommandResult>{},
+        writeFile?(fileName: string, content: string): void{},
+        getParsedCommandLine?(fileName: string): ParsedCommandLine | undefined{},
+        // GetEffectiveTypeRootsHost
+        directoryExists?(directoryName: string): boolean {},
+        // MinimalResolutionCacheHost
+        getCompilerHost: () => host2, // !
     }
 }
