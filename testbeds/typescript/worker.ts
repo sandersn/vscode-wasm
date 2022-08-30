@@ -50,22 +50,18 @@ function _initTsConfigHost(connection: ClientConnection<APIRequests>) {
         readonly directories: readonly string[];
     }
     type TSExt = typeof ts & {
-        matchFiles(path: string, extensions: readonly string[] | undefined, excludes: readonly string[] | undefined, includes: readonly string[] | undefined, useCaseSensitiveFileNames: boolean, currentDirectory: string, depth: number | undefined, getFileSystemEntries: (path: string) => FileSystemEntries, realpath: (path: string) => string): string[];
+        matchFiles(
+            path: string,
+            extensions: readonly string[] | undefined,
+            excludes: readonly string[] | undefined,
+            includes: readonly string[] | undefined,
+            useCaseSensitiveFileNames: boolean,
+            currentDirectory: string, depth: number | undefined,
+            getFileSystemEntries: (path: string) => FileSystemEntries,
+            realpath: (path: string) => string
+        ): string[];
     }
-    host = new class implements ts.ParseConfigFileHost {
-        // -- ParseConfigFileHost
-        readonly useCaseSensitiveFileNames: boolean = true;
-        getCurrentDirectory() {
-            return '/'
-        }
-        readDirectory(rootDir: string, extensions: readonly string[], excludes: readonly string[] | undefined, includes: readonly string[], depth?: number | undefined): readonly string[] {
-            return (<TSExt>ts).matchFiles(
-                rootDir, extensions, excludes, includes, false, this.getCurrentDirectory(), depth,
-                path => this._getFileSystemEntries(path),
-                path => path
-            )
-        }
-        private _getFileSystemEntries(path: string): FileSystemEntries {
+    function getFileSystemEntries(path: string): FileSystemEntries {
             const uri = Utils.joinPath(apiClient.vscode.workspace.workspaceFolders[0].uri, path)
             const entries = apiClient.vscode.workspace.fileSystem.readDirectory(uri);
             const files: string[] = [];
@@ -82,7 +78,18 @@ function _initTsConfigHost(connection: ClientConnection<APIRequests>) {
             }
             return { files, directories }
         }
-        fileExists(path: string): boolean {
+    host = {
+        // -- ParseConfigFileHost
+        useCaseSensitiveFileNames: true,
+        getCurrentDirectory: () => '/',
+        readDirectory(rootDir, extensions, excludes, includes, depth?): readonly string[] {
+            return (<TSExt>ts).matchFiles(
+                rootDir, extensions, excludes, includes, false, this.getCurrentDirectory(), depth,
+                getFileSystemEntries,
+                path => path
+            )
+        },
+        fileExists(path) {
             try {
                 const uri = Utils.joinPath(apiClient.vscode.workspace.workspaceFolders[0].uri, path)
                 apiClient.vscode.workspace.fileSystem.stat(uri)
@@ -90,16 +97,16 @@ function _initTsConfigHost(connection: ClientConnection<APIRequests>) {
             } catch (error) {
                 return false;
             }
-        }
-        readFile(path: string): string | undefined {
+        },
+        readFile(path) {
             const uri = Utils.joinPath(apiClient.vscode.workspace.workspaceFolders[0].uri, path)
             const bytes = apiClient.vscode.workspace.fileSystem.readFile(uri)
             return new TextDecoder().decode(new Uint8Array(bytes).slice())
-        }
+        },
         // --- ConfigFileDiagnosticsReporter
-        onUnRecoverableConfigFileDiagnostic(d: ts.Diagnostic) {
+        onUnRecoverableConfigFileDiagnostic(d) {
             debugger;
             console.error('FATAL', d)
-        }
+        },
     }
 }
