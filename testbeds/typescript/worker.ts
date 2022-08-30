@@ -1,18 +1,140 @@
+/// <reference types="typescript/lib/tsserverlibrary" />
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import * as ts from 'typescript';
-import { ApiClient, APIRequests } from '@vscode/sync-api-client';
+// import * as ts from 'typescript';
+import { ApiClient, APIRequests, FileType } from '@vscode/sync-api-client';
 import { ClientConnection, DTOs } from '@vscode/sync-api-common/browser';
+import { execFile } from 'child_process';
 import { Utils } from 'vscode-uri';
 
+export type ModuleImportResult = { module: {}, error: undefined } | { module: undefined, error: { stack?: string, message?: string } };
 
 let host: ts.ParseConfigFileHost | undefined
-let host2: ts.CompilerHost | undefined // ProgramHost, System, WatchCompilerHost[OfFileAndCompilerOptions], LanguageServiceHost
-let lsh: ts.LanguageServiceHost | undefined
+let sh: ts.server.ServerHost | undefined
 let init: Promise<any> | undefined
+function createServerHost(apiClient: ApiClient, args: string[]): ts.server.ServerHost {
+    const root = apiClient.vscode.workspace.workspaceFolders[0].uri // TODO: Might need to be a thunk
+    return {
+        /**
+         * @param pollingInterval ignored in native filewatchers; only used in polling watchers
+         */
+        watchFile(path: string, callback: ts.FileWatcherCallback, pollingInterval?: number, options?: ts.WatchOptions): ts.FileWatcher {
+            // I don't think this works yet
+            return null as never
+        },
+        watchDirectory(path: string, callback: ts.DirectoryWatcherCallback, recursive?: boolean, options?: ts.WatchOptions): ts.FileWatcher {
+            // same
+            return null as never
+        },
+        setTimeout(callback: (...args: any[]) => void, ms: number, ...args: any[]): any {
+            return setTimeout(callback, ms, ...args)
+        },
+        clearTimeout(timeoutId: any): void {
+            clearTimeout(timeoutId)
+        },
+        setImmediate(callback: (...args: any[]) => void, ...args: any[]): any {
+            setImmediate(callback, ...args)
+        },
+        clearImmediate(timeoutId: any): void {
+            clearImmediate(timeoutId)
+        },
+        // gc?(): void {}, // afaict this isn't available in the browser
+        trace: console.log,
+        // require?(initialPath: string, moduleName: string): ModuleImportResult {},
+        // importServicePlugin?(root: string, moduleName: string): Promise<ModuleImportResult> {},
+        // System
+        args,
+        newLine: '\n',
+        useCaseSensitiveFileNames: true,
+        write: apiClient.vscode.terminal.write, // TODO: MAYBE
+        writeOutputIsTTY(): boolean { return true }, // TODO: Maybe
+        // getWidthOfTerminal?(): number {},
+        readFile(path): string | undefined {
+            const uri = Utils.joinPath(root, path)
+            const bytes = apiClient.vscode.workspace.fileSystem.readFile(uri)
+            return new TextDecoder().decode(new Uint8Array(bytes).slice()) // TODO: Not sure why `bytes` or `bytes.slice()` isn't as good as `new Uint8Array(bytes).slice()`
+        },
+        getFileSize?(path: string): number {
+            const uri = Utils.joinPath(root, path)
+            const stat = apiClient.vscode.workspace.fileSystem.stat(uri)
+            return stat.size
+        },
+        writeFile(path: string, data: string): void {
+            const uri = Utils.joinPath(root, path)
+            apiClient.vscode.workspace.fileSystem.writeFile(uri, new TextEncoder().encode(data))
+        },
+        // TODO: Find out what this is supposed to do
+        resolvePath(path: string): string {
+            return path
+        },
+        fileExists(path: string): boolean {
+            const uri = Utils.joinPath(root, path)
+            const stat = apiClient.vscode.workspace.fileSystem.stat(uri)
+            return stat.type === FileType.File // TODO: Might be correct! (need to read the code to figure out how to use it)
+        },
+        directoryExists(path: string): boolean {
+            const uri = Utils.joinPath(root, path)
+            const stat = apiClient.vscode.workspace.fileSystem.stat(uri)
+            return stat.type === FileType.Directory // TODO: Might be correct! (need to read the code to figure out how to use it)
+        },
+        createDirectory(path: string): void {
+            const uri = Utils.joinPath(root, path)
+            apiClient.vscode.workspace.fileSystem.createDirectory(uri)
+        },
+        getExecutingFilePath(): string {
+            return root.toString() // TODO: Might be correct!
+        },
+        getCurrentDirectory(): string {
+            return root.toString() // TODO: Might be correct!
+        },
+        getDirectories(path: string): string[] {
+            const uri = Utils.joinPath(root, path)
+            const entries = apiClient.vscode.workspace.fileSystem.readDirectory(uri)
+            return entries.filter(([_,type]) => type === FileType.Directory).map(([f,_]) => f)
+        },
+        /**
+         * TODO: A lot of this code is made-up and should be copied from a known-good implementation
+         * For example, I have NO idea how to easily support `depth`
+        */
+        readDirectory(path: string, extensions?: readonly string[], exclude?: readonly string[], include?: readonly string[], depth?: number): string[] {
+            const uri = Utils.joinPath(root, path)
+            const entries = apiClient.vscode.workspace.fileSystem.readDirectory(uri)
+            return entries
+                .filter(([f,type]) => type === FileType.File && (!extensions || extensions.some(ext => f.endsWith(ext))) && (!exclude || !exclude.includes(f)))
+                .map(([e,_]) => e)
+        },
+        getModifiedTime(path: string): Date | undefined {
+            const uri = Utils.joinPath(root, path)
+            const stat = apiClient.vscode.workspace.fileSystem.stat(uri)
+            return new Date(stat.mtime)
+        },
+        // setModifiedTime?(path: string, time: Date): void {}, // TODO: This seems like a bad idea!
+        deleteFile(path: string): void {
+            const uri = Utils.joinPath(root, path)
+            apiClient.vscode.workspace.fileSystem.delete(uri)
+        },
+        /**
+         * A good implementation is node.js' `crypto.createHash`. (https://nodejs.org/api/crypto.html#crypto_crypto_createhash_algorithm)
+         */
+        // createHash?(data: string): string {},
+        /** This must be cryptographically secure. Only implement this method using `crypto.createHash("sha256")`. */
+        // createSHA256Hash?(data: string): string { },
+        // getMemoryUsage?(): number {},
+        exit(exitCode?: number): void {
+            console.log("EXCITING!" + exitCode) // TODO: I don't know what exit means in the browser. Just leave, right?
+        },
+        // realpath?(path: string): string {}, // TODO: Find out what this is supposed to do
+        // clearScreen?(): void { },
+        // base64decode?(input: string): string {},
+        // base64encode?(input: string): string {},
+    }
+
+}
 self.onmessage = async event => {
+    // I need to figure out which messages will be sent here
+    // and I need to figure out how to translate them into calls on sh
     const { data } = event;
     // when receiving a message port use it to create the sync-rpc
     // connection. continue to listen to "normal" message events
@@ -28,7 +150,8 @@ self.onmessage = async event => {
     }
     await init
     // every other message is a parse-ts-config-request
-    if (!host) {
+    // TODO: Really?!
+    if (!sh) {
         console.error('NOT READY', data);
         return
     }
@@ -37,7 +160,7 @@ self.onmessage = async event => {
         return;
     }
     try {
-        const parsed = ts.getParsedCommandLineOfConfigFile(data, undefined, host)
+        const parsed = ts.getParsedCommandLineOfConfigFile(data, undefined, sh)
         console.log(JSON.stringify(parsed, undefined, 4))
     } catch (error) {
         console.error(error)
@@ -47,6 +170,7 @@ self.onmessage = async event => {
 
 function initTsConfigHost(connection: ClientConnection<APIRequests>) {
 	const apiClient = new ApiClient(connection);
+    sh = createServerHost(apiClient, [])
     type FileSystemEntries = {
         readonly files: readonly string[];
         readonly directories: readonly string[];
@@ -110,94 +234,5 @@ function initTsConfigHost(connection: ClientConnection<APIRequests>) {
             debugger;
             console.error('FATAL', d)
         },
-    }
-    host2 = {
-        // ...host,
-        getSourceFile(fileName: string, languageVersionOrOptions: ScriptTarget | CreateSourceFileOptions, onError?: (message: string) => void, shouldCreateNewSourceFile?: boolean): SourceFile | undefined {
-        },
-        getSourceFileByPath?(fileName: string, path: Path, languageVersionOrOptions: ScriptTarget | CreateSourceFileOptions, onError?: (message: string) => void, shouldCreateNewSourceFile?: boolean): SourceFile | undefined {
-        },
-        getCancellationToken?(): CancellationToken {
-        },
-        getDefaultLibFileName(options: CompilerOptions): string {
-        },
-        getDefaultLibLocation?(): string {
-        },
-        writeFile: WriteFileCallback,
-        getCurrentDirectory(): string {
-        }
-        getCanonicalFileName(fileName: string): string {
-        },
-        useCaseSensitiveFileNames: () => true,
-        getNewLine: () => '\n',
-        readDirectory?(rootDir: string, extensions: readonly string[], excludes: readonly string[] | undefined, includes: readonly string[], depth?: number): string[] {
-        },
-        resolveModuleNames?(moduleNames: string[], containingFile: string, reusedNames: string[] | undefined, redirectedReference: ResolvedProjectReference | undefined, options: CompilerOptions, containingSourceFile?: SourceFile): (ResolvedModule | undefined)[] {
-        },
-        /**
-         * Returns the module resolution cache used by a provided `resolveModuleNames` implementation so that any non-name module resolution operations (eg, package.json lookup) can reuse it
-         */
-        getModuleResolutionCache?(): ModuleResolutionCache | undefined {
-        },
-        /**
-         * This method is a companion for 'resolveModuleNames' and is used to resolve 'types' references to actual type declaration files
-         */
-        resolveTypeReferenceDirectives?(typeReferenceDirectiveNames: string[] | readonly FileReference[], containingFile: string, redirectedReference: ResolvedProjectReference | undefined, options: CompilerOptions, containingFileMode?: SourceFile["impliedNodeFormat"] | undefined): (ResolvedTypeReferenceDirective | undefined)[] {
-        },
-        getEnvironmentVariable?(name: string): string | undefined {
-        },
-        createHash?(data: string): string {
-        },
-        getParsedCommandLine?(fileName: string): ParsedCommandLine | undefined {
-        }
-    }
-    let scriptVersion = new Map<string, number>()
-    let projectVersion = 0
-    lsh = {
-        getCompilationSettings(): ts.CompilerOptions {
-            // TODO: read settings from a tsconfig at root?
-            return {
-                strict: true
-            }
-        },
-        getNewLine: () => '\n',
-        getProjectVersion: () => projectVersion + ''
-        getScriptFileNames(): string[]{},
-        getScriptKind?(fileName: string): ScriptKind {},
-        getScriptVersion(fileName) {
-            // TODO: Might return undefined?!
-            return scriptVersion.get(fileName) + ''
-        },
-        getScriptSnapshot(fileName: string): IScriptSnapshot | undefined{},
-        getProjectReferences?(): readonly ProjectReference[] | undefined{},
-        getLocalizedDiagnosticMessages?(): any{},
-        getCancellationToken?(): HostCancellationToken{},
-        getCurrentDirectory(): string{},
-        getDefaultLibFileName(options: CompilerOptions): string{},
-        log?(s: string): void{},
-        trace?(s: string): void{},
-        error?(s: string): void{},
-        useCaseSensitiveFileNames?(): boolean{},
-        readDirectory?(path: string, extensions?: readonly string[], exclude?: readonly string[], include?: readonly string[], depth?: number): string[]{},
-        realpath?(path: string): string{},
-        readFile(path: string, encoding?: string): string | undefined{},
-        fileExists(path: string): boolean{},
-        getTypeRootsVersion?(): number{},
-        resolveModuleNames?(moduleNames: string[], containingFile: string, reusedNames: string[] | undefined, redirectedReference: ResolvedProjectReference | undefined, options: CompilerOptions, containingSourceFile?: SourceFile): (ResolvedModule | undefined)[]{},
-        getResolvedModuleWithFailedLookupLocationsFromCache?(modulename: string, containingFile: string, resolutionMode?: ModuleKind.CommonJS | ModuleKind.ESNext): ResolvedModuleWithFailedLookupLocations | undefined{},
-        resolveTypeReferenceDirectives?(typeDirectiveNames: string[] | FileReference[], containingFile: string, redirectedReference: ResolvedProjectReference | undefined, options: CompilerOptions, containingFileMode?: SourceFile["impliedNodeFormat"] | undefined): (ResolvedTypeReferenceDirective | undefined)[]{},
-        getDirectories?(directoryName: string): string[]{},
-        /**
-         * Gets a set of custom transformers to use during emit.
-         */
-        getCustomTransformers?(): CustomTransformers | undefined{},
-        isKnownTypesPackageName?(name: string): boolean{},
-        installPackage?(options: InstallPackageOptions): Promise<ApplyCodeActionCommandResult>{},
-        writeFile?(fileName: string, content: string): void{},
-        getParsedCommandLine?(fileName: string): ParsedCommandLine | undefined{},
-        // GetEffectiveTypeRootsHost
-        directoryExists?(directoryName: string): boolean {},
-        // MinimalResolutionCacheHost
-        getCompilerHost: () => host2, // !
     }
 }
