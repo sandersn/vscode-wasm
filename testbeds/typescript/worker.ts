@@ -1,4 +1,4 @@
-/// <reference types="typescript/lib/tsserverlibrary" />
+import * as ts from "typescript/lib/tsserverlibrary"
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -6,7 +6,6 @@
 // import * as ts from 'typescript';
 import { ApiClient, APIRequests, FileType } from '@vscode/sync-api-client';
 import { ClientConnection, DTOs } from '@vscode/sync-api-common/browser';
-import { execFile } from 'child_process';
 import { Utils } from 'vscode-uri';
 
 export type ModuleImportResult = { module: {}, error: undefined } | { module: undefined, error: { stack?: string, message?: string } };
@@ -56,7 +55,7 @@ function createServerHost(apiClient: ApiClient, args: string[]): ts.server.Serve
             const bytes = apiClient.vscode.workspace.fileSystem.readFile(uri)
             return new TextDecoder().decode(new Uint8Array(bytes).slice()) // TODO: Not sure why `bytes` or `bytes.slice()` isn't as good as `new Uint8Array(bytes).slice()`
         },
-        getFileSize?(path: string): number {
+        getFileSize(path: string): number {
             const uri = Utils.joinPath(root, path)
             const stat = apiClient.vscode.workspace.fileSystem.stat(uri)
             return stat.size
@@ -133,9 +132,7 @@ function createServerHost(apiClient: ApiClient, args: string[]): ts.server.Serve
 
 }
 self.onmessage = async event => {
-    // I need to figure out which messages will be sent here
-    // and I need to figure out how to translate them into calls on sh
-    const { data } = event;
+    const { data } = event as MessageEvent<string | MessagePort>;
     // when receiving a message port use it to create the sync-rpc
     // connection. continue to listen to "normal" message events
     // for commands or other things
@@ -150,8 +147,7 @@ self.onmessage = async event => {
     }
     await init
     // every other message is a parse-ts-config-request
-    // TODO: Really?!
-    if (!sh) {
+    if (!host) {
         console.error('NOT READY', data);
         return
     }
@@ -160,7 +156,7 @@ self.onmessage = async event => {
         return;
     }
     try {
-        const parsed = ts.getParsedCommandLineOfConfigFile(data, undefined, sh)
+        const parsed = ts.getParsedCommandLineOfConfigFile(data, undefined, host)
         console.log(JSON.stringify(parsed, undefined, 4))
     } catch (error) {
         console.error(error)
