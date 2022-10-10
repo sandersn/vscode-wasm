@@ -1,14 +1,11 @@
-import * as ts from "typescript/lib/tsserverlibrary"
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-// import * as ts from 'typescript';
+import * as ts from "typescript/lib/tsserverlibrary"
 import { ApiClient, APIRequests, FileType } from '@vscode/sync-api-client';
 import { ClientConnection, DTOs } from '@vscode/sync-api-common/browser';
 import { Utils } from 'vscode-uri';
-
-export type ModuleImportResult = { module: {}, error: undefined } | { module: undefined, error: { stack?: string, message?: string } };
 
 let host: ts.ParseConfigFileHost | undefined
 let sh: ts.server.ServerHost | undefined
@@ -129,7 +126,6 @@ function createServerHost(apiClient: ApiClient, args: string[]): ts.server.Serve
         // base64decode?(input: string): string {},
         // base64encode?(input: string): string {},
     }
-
 }
 self.onmessage = async event => {
     const { data } = event as MessageEvent<string | MessagePort>;
